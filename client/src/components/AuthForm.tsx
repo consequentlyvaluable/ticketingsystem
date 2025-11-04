@@ -62,8 +62,8 @@ export function AuthForm () {
   return (
     <form onSubmit={handleSubmit} style={formStyles}>
       <div>
-        <h1 style={{ margin: '0 0 0.5rem', fontSize: '2rem' }}>Ticketing Platform</h1>
-        <p style={{ margin: 0, color: '#64748b' }}>Multi-tenant ticketing made simple.</p>
+        <h1 style={{ margin: '0 0 0.5rem', fontSize: '2rem' }}>Ticketing App</h1>
+        <p style={{ margin: 0, color: '#64748b' }}>Ticketing made simple.</p>
       </div>
 
       <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
