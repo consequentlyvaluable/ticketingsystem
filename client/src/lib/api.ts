@@ -1,8 +1,10 @@
 import axios from 'axios'
 import type { Session } from '@supabase/supabase-js'
 
+const configuredBaseUrl = import.meta.env.VITE_API_URL?.trim()
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:4000'
+  baseURL: configuredBaseUrl?.length ? configuredBaseUrl : undefined
 })
 
 export function setSession (session: Session | null) {
