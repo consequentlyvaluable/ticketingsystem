@@ -28,6 +28,9 @@ supabase/ # SQL schema and policies to run inside your Supabase instance
    - Duplicate `client/.env.example` as `client/.env` and set:
      - `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`
      - `VITE_API_URL` – usually `http://localhost:4000`
+   - (Optional) Adjust `client/public/runtime-config.js` (a copy of `runtime-config.example.js` is provided) to override the
+     `apiUrl` after the app has been built. This is useful on static hosts like Netlify where you may not want to rebuild the
+     frontend just to change the backend URL.
 
 3. **Provision the database**
 
