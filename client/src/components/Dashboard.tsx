@@ -1,24 +1,23 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
-import { api } from '../lib/api'
 
 interface Tenant {
   id: string
   name: string
-  slug: string
-  role: string
+  role: string | null
   created_at: string
 }
 
 interface Project {
   id: string
+  tenant_id: string
   name: string
   description: string | null
-  status: string
   created_at: string
-  updated_at: string | null
 }
+
+type TicketPriority = 'low' | 'medium' | 'high'
 
 interface Ticket {
   id: string
@@ -27,9 +26,8 @@ interface Ticket {
   title: string
   description: string | null
   status: string
-  priority: string
-  assignee_id: string | null
-  reporter_id: string
+  priority: TicketPriority
+  created_by: string | null
   created_at: string
   updated_at: string | null
 }
@@ -37,9 +35,64 @@ interface Ticket {
 interface Comment {
   id: string
   ticket_id: string
-  body: string
+  tenant_id: string
+  content: string
   author_id: string
   created_at: string
+}
+
+function priorityNumberToLabel (value: number | null | undefined): TicketPriority {
+  if (value === null || value === undefined) return 'medium'
+  if (value <= 1) return 'low'
+  if (value >= 4) return 'high'
+  return 'medium'
+}
+
+function priorityLabelToNumber (label: string): number {
+  switch (label) {
+    case 'low':
+      return 1
+    case 'high':
+      return 5
+    default:
+      return 3
+  }
+}
+
+function mapProjectRow (row: any): Project {
+  return {
+    id: row.id,
+    tenant_id: row.tenant_id,
+    name: row.name,
+    description: row.description ?? null,
+    created_at: row.created_at
+  }
+}
+
+function mapTicketRow (row: any): Ticket {
+  return {
+    id: row.id,
+    project_id: row.project_id,
+    tenant_id: row.tenant_id,
+    title: row.title,
+    description: row.description ?? null,
+    status: row.status,
+    priority: priorityNumberToLabel(row.priority),
+    created_by: row.created_by ?? null,
+    created_at: row.created_at,
+    updated_at: row.updated_at ?? null
+  }
+}
+
+function mapCommentRow (row: any): Comment {
+  return {
+    id: row.id,
+    ticket_id: row.ticket_id,
+    tenant_id: row.tenant_id,
+    content: row.content ?? '',
+    author_id: row.author_id,
+    created_at: row.created_at
+  }
 }
 
 const panelStyles: React.CSSProperties = {
@@ -124,29 +177,64 @@ export function Dashboard ({ session }: DashboardProps) {
   )
 
   useEffect(() => {
-    if (!session?.access_token) {
+    if (!session?.user?.id) {
       return
     }
+
+    let active = true
 
     const fetchTenants = async () => {
       setTenantLoading(true)
       setTenantError(null)
       try {
-        const response = await api.get('/api/tenants')
-        const tenantList = Array.isArray(response.data?.tenants) ? response.data.tenants : []
+        const { data, error } = await supabase
+          .from('members')
+          .select('role, tenants(id, name, created_at)')
+          .eq('user_id', session.user.id)
+
+        if (error) throw error
+
+        const tenantList = (data ?? [])
+          .map(member => {
+            const tenant = (member as any).tenants
+            if (!tenant) return null
+            return {
+              id: tenant.id,
+              name: tenant.name,
+              created_at: tenant.created_at,
+              role: member.role ?? 'member'
+            } as Tenant
+          })
+          .filter((tenant): tenant is Tenant => Boolean(tenant))
+
+        if (!active) return
+
         setTenants(tenantList)
-        if (tenantList.length > 0) {
-          setSelectedTenantId(tenantList[0].id)
-        }
+        setSelectedTenantId(currentId => {
+          if (tenantList.length === 0) {
+            return ''
+          }
+          if (currentId && tenantList.some(tenant => tenant.id === currentId)) {
+            return currentId
+          }
+          return tenantList[0].id
+        })
       } catch (error) {
+        if (!active) return
         setTenantError(error instanceof Error ? error.message : 'Unable to load tenants')
       } finally {
-        setTenantLoading(false)
+        if (active) {
+          setTenantLoading(false)
+        }
       }
     }
 
     fetchTenants()
-  }, [session?.access_token])
+
+    return () => {
+      active = false
+    }
+  }, [session?.user?.id])
 
   useEffect(() => {
     if (!selectedTenantId) {
@@ -158,34 +246,77 @@ export function Dashboard ({ session }: DashboardProps) {
       return
     }
 
-    const loadProjects = async () => {
-      try {
-        const response = await api.get('/api/projects', {
-          params: { tenantId: selectedTenantId }
-        })
-        const projectList = Array.isArray(response.data?.projects) ? response.data.projects : []
-        setProjects(projectList)
-        if (projectList.length > 0) {
-          setSelectedProjectId(projectList[0].id)
-        } else {
-          setSelectedProjectId('')
-        }
-      } catch (error) {
-        console.error(error)
-      }
-    }
+    let active = true
 
-    const loadTickets = async () => {
+    const loadTenantData = async () => {
       try {
-        const response = await api.get('/api/tickets', {
-          params: { tenantId: selectedTenantId }
+        const { data: projectRows, error: projectError } = await supabase
+          .from('projects')
+          .select('id, tenant_id, name, description, created_at')
+          .eq('tenant_id', selectedTenantId)
+          .order('created_at', { ascending: true })
+
+        if (projectError) throw projectError
+
+        const mappedProjects = (projectRows ?? []).map(mapProjectRow)
+
+        if (!active) return
+
+        setProjects(mappedProjects)
+
+        let nextProjectId = ''
+        setSelectedProjectId(currentProjectId => {
+          if (mappedProjects.length === 0) {
+            nextProjectId = ''
+            return ''
+          }
+
+          const stillValid = currentProjectId && mappedProjects.some(project => project.id === currentProjectId)
+          if (stillValid) {
+            nextProjectId = currentProjectId
+            return currentProjectId
+          }
+
+          nextProjectId = mappedProjects[0].id
+          return nextProjectId
         })
-        const ticketList = Array.isArray(response.data?.tickets) ? response.data.tickets : []
-        setTickets(ticketList)
-        if (ticketList.length > 0) {
-          setSelectedTicketId(ticketList[0].id)
-        } else {
-          setSelectedTicketId('')
+
+        const { data: ticketRows, error: ticketError } = await supabase
+          .from('tickets')
+          .select('id, tenant_id, project_id, title, description, status, priority, created_by, created_at, updated_at')
+          .eq('tenant_id', selectedTenantId)
+          .order('created_at', { ascending: false })
+
+        if (ticketError) throw ticketError
+
+        const mappedTickets = (ticketRows ?? []).map(mapTicketRow)
+
+        if (!active) return
+
+        setTickets(mappedTickets)
+
+        let nextTicketId = ''
+        setSelectedTicketId(currentTicketId => {
+          if (mappedTickets.length === 0) {
+            nextTicketId = ''
+            return ''
+          }
+
+          const stillValid = currentTicketId && mappedTickets.some(ticket => ticket.id === currentTicketId && (!nextProjectId || ticket.project_id === nextProjectId))
+          if (stillValid) {
+            nextTicketId = currentTicketId
+            return currentTicketId
+          }
+
+          const fallbackTicket = nextProjectId
+            ? mappedTickets.find(ticket => ticket.project_id === nextProjectId)
+            : mappedTickets[0]
+
+          nextTicketId = fallbackTicket ? fallbackTicket.id : ''
+          return nextTicketId
+        })
+
+        if (nextTicketId === '') {
           setComments([])
         }
       } catch (error) {
@@ -193,8 +324,11 @@ export function Dashboard ({ session }: DashboardProps) {
       }
     }
 
-    loadProjects()
-    loadTickets()
+    loadTenantData()
+
+    return () => {
+      active = false
+    }
   }, [selectedTenantId])
 
   useEffect(() => {
@@ -203,19 +337,34 @@ export function Dashboard ({ session }: DashboardProps) {
       return
     }
 
+    let active = true
+
     const loadComments = async () => {
       try {
-        const response = await api.get(`/api/tickets/${selectedTicketId}/comments`, {
-          params: { tenantId: selectedTenantId }
-        })
-        const commentList = Array.isArray(response.data?.comments) ? response.data.comments : []
-        setComments(commentList)
+        const { data, error } = await supabase
+          .from('comments')
+          .select('id, ticket_id, tenant_id, content, author_id, created_at')
+          .eq('ticket_id', selectedTicketId)
+          .eq('tenant_id', selectedTenantId)
+          .order('created_at', { ascending: true })
+
+        if (error) throw error
+
+        if (!active) return
+
+        setComments((data ?? []).map(mapCommentRow))
       } catch (error) {
-        console.error(error)
+        if (active) {
+          console.error(error)
+        }
       }
     }
 
     loadComments()
+
+    return () => {
+      active = false
+    }
   }, [selectedTicketId, selectedTenantId])
 
   const handleSignOut = async () => {
@@ -226,15 +375,34 @@ export function Dashboard ({ session }: DashboardProps) {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
     const name = form.get('tenantName')?.toString().trim() ?? ''
-    const slug = form.get('tenantSlug')?.toString().trim().toLowerCase() ?? ''
 
-    if (!name || !slug) return
+    if (!name || !session.user?.id) return
 
     try {
       setCreatingTenant(true)
-      const response = await api.post('/api/tenants', { name, slug })
-      const newTenant: Tenant = response.data.tenant
-      newTenant.role = 'owner'
+
+      const { data: tenantRow, error: tenantError } = await supabase
+        .from('tenants')
+        .insert({ name })
+        .select('id, name, created_at')
+        .single()
+
+      if (tenantError) throw tenantError
+      if (!tenantRow) throw new Error('Unable to create tenant')
+
+      const { error: memberError } = await supabase
+        .from('members')
+        .insert({ tenant_id: tenantRow.id, user_id: session.user.id, role: 'owner' })
+
+      if (memberError) throw memberError
+
+      const newTenant: Tenant = {
+        id: tenantRow.id,
+        name: tenantRow.name,
+        created_at: tenantRow.created_at,
+        role: 'owner'
+      }
+
       setTenants(current => [...current, newTenant])
       setSelectedTenantId(newTenant.id)
       event.currentTarget.reset()
@@ -256,12 +424,20 @@ export function Dashboard ({ session }: DashboardProps) {
 
     try {
       setCreatingProject(true)
-      const response = await api.post('/api/projects', {
-        tenantId: selectedTenantId,
-        name,
-        description
-      })
-      const project: Project = response.data.project
+      const { data, error } = await supabase
+        .from('projects')
+        .insert({
+          tenant_id: selectedTenantId,
+          name,
+          description: description.length ? description : null
+        })
+        .select('id, tenant_id, name, description, created_at')
+        .single()
+
+      if (error) throw error
+      if (!data) throw new Error('Unable to create project')
+
+      const project = mapProjectRow(data)
       setProjects(current => [...current, project])
       setSelectedProjectId(project.id)
       event.currentTarget.reset()
@@ -285,14 +461,23 @@ export function Dashboard ({ session }: DashboardProps) {
 
     try {
       setCreatingTicket(true)
-      const response = await api.post('/api/tickets', {
-        tenantId: selectedTenantId,
-        projectId: selectedProjectId,
-        title,
-        description,
-        priority
-      })
-      const ticket: Ticket = response.data.ticket
+      const { data, error } = await supabase
+        .from('tickets')
+        .insert({
+          tenant_id: selectedTenantId,
+          project_id: selectedProjectId,
+          title,
+          description: description.length ? description : null,
+          priority: priorityLabelToNumber(priority),
+          created_by: session.user.id
+        })
+        .select('id, tenant_id, project_id, title, description, status, priority, created_by, created_at, updated_at')
+        .single()
+
+      if (error) throw error
+      if (!data) throw new Error('Unable to create ticket')
+
+      const ticket = mapTicketRow(data)
       setTickets(current => [ticket, ...current])
       setSelectedTicketId(ticket.id)
       event.currentTarget.reset()
@@ -307,11 +492,19 @@ export function Dashboard ({ session }: DashboardProps) {
     if (!selectedTenantId) return
 
     try {
-      const { data } = await api.patch(`/api/tickets/${ticketId}`, {
-        tenantId: selectedTenantId,
-        status
-      })
-      setTickets(current => current.map(ticket => ticket.id === ticketId ? data.ticket : ticket))
+      const { data, error } = await supabase
+        .from('tickets')
+        .update({ status })
+        .eq('id', ticketId)
+        .eq('tenant_id', selectedTenantId)
+        .select('id, tenant_id, project_id, title, description, status, priority, created_by, created_at, updated_at')
+        .single()
+
+      if (error) throw error
+      if (!data) throw new Error('Unable to update ticket')
+
+      const updatedTicket = mapTicketRow(data)
+      setTickets(current => current.map(ticket => ticket.id === ticketId ? updatedTicket : ticket))
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Unable to update ticket')
     }
@@ -319,14 +512,24 @@ export function Dashboard ({ session }: DashboardProps) {
 
   const handleCreateComment = async (event: React.FormEvent) => {
     event.preventDefault()
-    if (!commentBody || !selectedTicketId || !selectedTenantId) return
+    if (!commentBody || !selectedTicketId || !selectedTenantId || !session.user?.id) return
 
     try {
-      const { data } = await api.post(`/api/tickets/${selectedTicketId}/comments`, {
-        tenantId: selectedTenantId,
-        body: commentBody
-      })
-      setComments(current => [...current, data.comment])
+      const { data, error } = await supabase
+        .from('comments')
+        .insert({
+          tenant_id: selectedTenantId,
+          ticket_id: selectedTicketId,
+          author_id: session.user.id,
+          content: commentBody
+        })
+        .select('id, ticket_id, tenant_id, content, author_id, created_at')
+        .single()
+
+      if (error) throw error
+      if (!data) throw new Error('Unable to add comment')
+
+      setComments(current => [...current, mapCommentRow(data)])
       setCommentBody('')
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Unable to add comment')
@@ -364,7 +567,7 @@ export function Dashboard ({ session }: DashboardProps) {
                 }}
               >
                 <span>{tenant.name}</span>
-                <span style={{ ...badgeStyles, backgroundColor: 'rgba(255,255,255,0.2)', color: '#fff' }}>{tenant.role}</span>
+                <span style={{ ...badgeStyles, backgroundColor: 'rgba(255,255,255,0.2)', color: '#fff' }}>{tenant.role ?? 'member'}</span>
               </button>
             ))}
           </div>
@@ -373,10 +576,6 @@ export function Dashboard ({ session }: DashboardProps) {
             <div>
               <label style={labelStyles} htmlFor="tenantName">Tenant name</label>
               <input id="tenantName" name="tenantName" required placeholder="Acme Corp" style={inputStyles} />
-            </div>
-            <div>
-              <label style={labelStyles} htmlFor="tenantSlug">Slug</label>
-              <input id="tenantSlug" name="tenantSlug" required placeholder="acme" style={inputStyles} />
             </div>
             <button type="submit" style={{ ...buttonStyles, alignSelf: 'flex-start', opacity: creatingTenant ? 0.7 : 1 }} disabled={creatingTenant}>
               {creatingTenant ? 'Creating…' : 'Create tenant'}
@@ -528,7 +727,7 @@ export function Dashboard ({ session }: DashboardProps) {
                       <span>{comment.author_id === session.user.id ? 'You' : comment.author_id}</span>
                       <span>{new Date(comment.created_at).toLocaleString()}</span>
                     </header>
-                    <p style={{ margin: 0 }}>{comment.body}</p>
+                    <p style={{ margin: 0 }}>{comment.content}</p>
                   </article>
                 ))}
               </div>
