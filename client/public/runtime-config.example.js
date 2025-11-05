@@ -4,3 +4,7 @@
 // During local development you can leave the value empty.
 window.__APP_CONFIG__ = window.__APP_CONFIG__ || {}
 window.__APP_CONFIG__.apiUrl = window.__APP_CONFIG__.apiUrl || ''
+
+if (typeof window.__APPLY_APP_CONFIG__ === 'function') {
+  window.__APPLY_APP_CONFIG__(window.__APP_CONFIG__)
+}

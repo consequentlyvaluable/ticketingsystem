@@ -3,3 +3,7 @@
 // This file is loaded at runtime before the application bundle executes.
 window.__APP_CONFIG__ = window.__APP_CONFIG__ || {}
 window.__APP_CONFIG__.apiUrl = window.__APP_CONFIG__.apiUrl || ''
+
+if (typeof window.__APPLY_APP_CONFIG__ === 'function') {
+  window.__APPLY_APP_CONFIG__(window.__APP_CONFIG__)
+}
