@@ -1,15 +1,9 @@
-import { useEffect } from 'react'
 import { AuthForm } from './components/AuthForm'
 import { Dashboard } from './components/Dashboard'
 import { useSupabaseSession } from './hooks/useSupabaseSession'
-import { setSession } from './lib/api'
 
 function App () {
   const { session, loading } = useSupabaseSession()
-
-  useEffect(() => {
-    setSession(session ?? null)
-  }, [session])
 
   if (loading) {
     return (
