@@ -119,7 +119,7 @@ export function Dashboard ({ session }: DashboardProps) {
   const [commentBody, setCommentBody] = useState('')
 
   const selectedTenant = useMemo(
-    () => tenants.find(tenant => tenant.id === selectedTenantId) ?? null,
+    () => (Array.isArray(tenants) ? tenants.find(tenant => tenant.id === selectedTenantId) : null),
     [tenants, selectedTenantId]
   )
 
@@ -133,9 +133,10 @@ export function Dashboard ({ session }: DashboardProps) {
       setTenantError(null)
       try {
         const response = await api.get('/api/tenants')
-        setTenants(response.data.tenants)
-        if (response.data.tenants.length > 0) {
-          setSelectedTenantId(response.data.tenants[0].id)
+        const tenantList = Array.isArray(response.data?.tenants) ? response.data.tenants : []
+        setTenants(tenantList)
+        if (tenantList.length > 0) {
+          setSelectedTenantId(tenantList[0].id)
         }
       } catch (error) {
         setTenantError(error instanceof Error ? error.message : 'Unable to load tenants')
@@ -162,9 +163,10 @@ export function Dashboard ({ session }: DashboardProps) {
         const response = await api.get('/api/projects', {
           params: { tenantId: selectedTenantId }
         })
-        setProjects(response.data.projects)
-        if (response.data.projects.length > 0) {
-          setSelectedProjectId(response.data.projects[0].id)
+        const projectList = Array.isArray(response.data?.projects) ? response.data.projects : []
+        setProjects(projectList)
+        if (projectList.length > 0) {
+          setSelectedProjectId(projectList[0].id)
         } else {
           setSelectedProjectId('')
         }
@@ -178,9 +180,10 @@ export function Dashboard ({ session }: DashboardProps) {
         const response = await api.get('/api/tickets', {
           params: { tenantId: selectedTenantId }
         })
-        setTickets(response.data.tickets)
-        if (response.data.tickets.length > 0) {
-          setSelectedTicketId(response.data.tickets[0].id)
+        const ticketList = Array.isArray(response.data?.tickets) ? response.data.tickets : []
+        setTickets(ticketList)
+        if (ticketList.length > 0) {
+          setSelectedTicketId(ticketList[0].id)
         } else {
           setSelectedTicketId('')
           setComments([])
@@ -205,7 +208,8 @@ export function Dashboard ({ session }: DashboardProps) {
         const response = await api.get(`/api/tickets/${selectedTicketId}/comments`, {
           params: { tenantId: selectedTenantId }
         })
-        setComments(response.data.comments)
+        const commentList = Array.isArray(response.data?.comments) ? response.data.comments : []
+        setComments(commentList)
       } catch (error) {
         console.error(error)
       }
